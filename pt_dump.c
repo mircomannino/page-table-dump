@@ -12,6 +12,37 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Mirco Mannino");
 MODULE_DESCRIPTION("Page Table Dumper Module with PID parameter");
 
+static void print_pte_flags(pte_t pte)
+{
+    pr_cont(" - PTE flags:");
+
+    if (!pte_present(pte)) {
+        pr_cont(" !PRESENT");
+        return;
+    }
+    if (pte_write(pte))
+        pr_cont(" WRITE");
+    else
+        pr_cont(" READ-ONLY");
+
+    if (pte_dirty(pte))
+        pr_cont(" DIRTY");
+
+    if (pte_young(pte))
+        pr_cont(" ACCESSED");
+
+#ifdef pte_exec
+    if (pte_exec(pte))
+        pr_cont(" EXEC");
+#endif
+
+    if (pte_special(pte))
+        pr_cont(" SPECIAL");
+
+    pr_cont("\n");
+}
+
+
 // Module parameter: target PID
 static int target_pid = 0;
 module_param(target_pid, int, 0444);
@@ -69,10 +100,24 @@ static int __init pt_dump_init(void)
             pud = pud_offset(p4d, addr);
             if (pud_none(*pud) || pud_bad(*pud))
                 continue;
+            
+            if (pud_trans_huge(*pud)) {
+                phys_addr_t phys = (phys_addr_t)(pud_pfn(*pud) << PAGE_SHIFT);
+                pr_info("VA 0x%lx -> PA 0x%llx [1GB huge page]\n", addr, (unsigned long long)phys);
+                addr += (1024 * 1024 * 1024) - PAGE_SIZE; // skip the rest of the 2MB range minus one PAGE_SIZE increment later
+                continue;
+            }
 
             pmd = pmd_offset(pud, addr);
             if (pmd_none(*pmd) || pmd_bad(*pmd))
                 continue;
+            
+            if (pmd_trans_huge(*pmd)) {
+                phys_addr_t phys = (phys_addr_t)(pmd_pfn(*pmd) << PAGE_SHIFT);
+                pr_info("VA 0x%lx -> PA 0x%llx [2MB huge page]\n", addr, (unsigned long long)phys);
+                addr += (2 * 1024 * 1024) - PAGE_SIZE; // skip the rest of the 2MB range minus one PAGE_SIZE increment later
+                continue;
+            }
 
             pte = pte_offset_map(pmd, addr);
             if (!pte)
@@ -80,7 +125,8 @@ static int __init pt_dump_init(void)
 
             if (pte_present(*pte)) {
                 phys_addr_t phys = (phys_addr_t)(pte_pfn(*pte) << PAGE_SHIFT);
-                pr_info("\tVA 0x%lx -> PA 0x%llx\n", addr, (unsigned long long)phys);
+                pr_info("VA 0x%lx -> PA 0x%llx", addr, (unsigned long long)phys);
+                print_pte_flags(*pte);
             }
 
             pte_unmap(pte);
